@@ -152,7 +152,8 @@ instance Pretty CStat where
     pretty (CCont _) = ii $ text "continue" <> semi
     pretty (CBreak _) = ii $ text "break" <> semi
     pretty (CReturn Nothing _) = ii $ text "return" <> semi
-    pretty (CReturn (Just e) _) = ii $ text "return" <+> pretty e <> semi
+    pretty (CReturn (Just e@(CConst _)) _) = ii $ text "return" <+> pretty e <> semi
+    pretty (CReturn (Just e) _) = ii $ text "return" <+> parens (pretty e) <> semi
     pretty (CAsm asmStmt _) = pretty asmStmt
     prettyPrec p (CCompound localLabels bis _) =
         let inner = text "{" $+$ mlistP ppLblDecls localLabels $+$ vcat (map pretty bis) $$ text "}"
