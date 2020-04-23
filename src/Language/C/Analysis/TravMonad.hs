@@ -58,12 +58,14 @@ import Language.C.Data.RList as RList
 import Language.C.Analysis.Builtins
 import Language.C.Analysis.SemError
 import Language.C.Analysis.SemRep
+import Language.C.Analysis.TypeUtils (sameType)
 import Language.C.Analysis.DefTable hiding (enterBlockScope,leaveBlockScope,
                                             enterFunctionScope,leaveFunctionScope)
 import qualified Language.C.Analysis.DefTable as ST
 
 import Data.IntMap (insert)
 import Data.Maybe
+import Control.Applicative (Applicative(..))
 import Control.Monad (liftM, ap)
 import Prelude hiding (lookup)
 
@@ -116,7 +118,7 @@ checkRedef subject new_decl redecl_status =
 handleTagDecl :: (MonadCError m, MonadSymtab m) => TagFwdDecl -> m ()
 handleTagDecl decl = do
     redecl <- withDefTable $ declareTag (sueRef decl) decl
-    checkRedef (show $ sueRef decl) decl redecl
+    checkRedef (sueRefToString $ sueRef decl) decl redecl
 
 -- | define the given composite type or enumeration
 -- If there is a declaration visible, overwrite it with the definition.
@@ -125,20 +127,27 @@ handleTagDecl decl = do
 handleTagDef :: (MonadTrav m) => TagDef -> m ()
 handleTagDef def = do
     redecl <- withDefTable $ defineTag (sueRef def) def
-    checkRedef (show $ sueRef def) def redecl
+    checkRedef (sueRefToString $ sueRef def) def redecl
     handleDecl (TagEvent def)
 
 handleEnumeratorDef :: (MonadCError m, MonadSymtab m) => Enumerator ->  m ()
 handleEnumeratorDef enumerator = do
     let ident = declIdent enumerator
     redecl <- withDefTable $ defineScopedIdent ident (EnumeratorDef enumerator)
-    checkRedef (show ident) ident redecl
+    checkRedef (identToString ident) ident redecl
     return ()
 
 handleTypeDef :: (MonadTrav m) => TypeDef -> m ()
-handleTypeDef typeDef@(TypeDef ident _ _ _) = do
+handleTypeDef typeDef@(TypeDef ident t1 _ _) = do
     redecl <- withDefTable $ defineTypeDef ident typeDef
-    checkRedef (show ident) typeDef redecl
+    -- C11 6.7/3 If an identifier has no linkage, there shall be no more than
+    -- one declaration of the identifier (in a declarator or type specifier)
+    -- with the same scope and in the same name space, except that: a typedef
+    -- name may be redefined to denote the same type as it currently does,
+    -- provided that type is not a variably modified type;
+    case redecl of
+      Redeclared (Left (TypeDef _ t2 _ _)) | sameType t1 t2 -> return ()
+      _ -> checkRedef (identToString ident) typeDef redecl
     handleDecl (TypeDefEvent typeDef)
     return ()
 
@@ -148,7 +157,7 @@ handleAsmBlock asm = handleDecl (AsmEvent asm)
 redefErr :: (MonadCError m, CNode old, CNode new) =>
             Ident -> ErrorLevel -> new -> old -> RedefKind -> m ()
 redefErr name lvl new old kind =
-  throwTravError $ redefinition lvl (show name) kind (nodeInfo new) (nodeInfo old)
+  throwTravError $ redefinition lvl (identToString name) kind (nodeInfo new) (nodeInfo old)
 
 -- TODO: unused
 _checkIdentTyRedef :: (MonadCError m) => IdentEntry -> (DeclarationStatus IdentEntry) -> m ()

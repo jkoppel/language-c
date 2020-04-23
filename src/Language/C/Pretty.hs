@@ -22,6 +22,7 @@ import Data.List (isSuffixOf)
 import qualified Data.Set as Set
 import Text.PrettyPrint.HughesPJ
 import Debug.Trace {- for warnings -}
+import Prelude hiding ((<>))
 
 import Language.C.Data
 import Language.C.Syntax
@@ -237,6 +238,9 @@ instance Pretty CStorageSpec where
     pretty (CExtern _) = text "extern"
     pretty (CTypedef _) = text "typedef"
     pretty (CThread _) = text "_Thread_local"
+    pretty (CClKernel _) = text "__kernel"
+    pretty (CClGlobal _) = text "__global"
+    pretty (CClLocal _)  = text "__local"
 
 instance Pretty CTypeSpec where
     pretty (CVoidType _)        = text "void"
@@ -245,6 +249,8 @@ instance Pretty CTypeSpec where
     pretty (CIntType _)         = text "int"
     pretty (CLongType _)        = text "long"
     pretty (CFloatType _)       = text "float"
+    pretty (CFloatNType n x _)  = text "_Float" <> text (show n) <>
+                                  (if x then text "x" else empty) 
     pretty (CDoubleType _)      = text "double"
     pretty (CSignedType _)      = text "signed"
     pretty (CUnsigType _)       = text "unsigned"
@@ -269,6 +275,8 @@ instance Pretty CTypeQual where
     pretty (CAttrQual a)  = attrlistP [a]
     pretty (CNullableQual _) = text "_Nullable"
     pretty (CNonnullQual _) = text "_Nonnull"
+    pretty (CClRdOnlyQual _) = text "__read_only"
+    pretty (CClWrOnlyQual _) = text "__write_only"
 
 instance Pretty CFunSpec where
     pretty (CInlineQual _) = text "inline"
@@ -461,6 +469,9 @@ instance Pretty CBuiltin where
     pretty (CBuiltinTypesCompatible ty1 ty2 _) =
         text "__builtin_types_compatible_p" <+>
         parens (pretty ty1 <> comma <+> pretty ty2)
+    pretty (CBuiltinConvertVector expr ty _)  =
+        text "__builtin_convertvector" <+>
+        parens (pretty expr <> comma <+> pretty ty)
 
 instance Pretty CAssignOp where
   pretty op = text $ case op of

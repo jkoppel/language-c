@@ -14,12 +14,13 @@ module Language.C.Data (
      -- * Input stream
      module Language.C.Data.InputStream,
      -- * Identifiers
-     SUERef(..), isAnonymousRef,
+     SUERef(..), isAnonymousRef, sueRefToString,
      Ident,mkIdent, identToString, internalIdent, isInternalIdent, builtinIdent,
      -- * Unqiue names
      Name(..),newNameSupply,
      -- * Source code positions
-     Position(..),Pos(..),
+     Position(..),posFile,posParent,
+     Pos(..),
      initPos, nopos,builtinPos,internalPos,
      isSourcePos,isBuiltinPos,isInternalPos,
      -- * Syntax tree nodes

@@ -136,7 +136,7 @@ splitIdentDecls :: Bool -> Map Ident IdentDecl -> (Map Ident Decl,
                                                 ( Map Ident Enumerator,
                                                   Map Ident ObjDef,
                                                   Map Ident FunDef ) )
-splitIdentDecls include_all = Map.foldWithKey (if include_all then deal else deal') (Map.empty,(Map.empty,Map.empty,Map.empty))
+splitIdentDecls include_all = Map.foldrWithKey (if include_all then deal else deal') (Map.empty,(Map.empty,Map.empty,Map.empty))
   where
   deal ident entry (decls,defs) = (Map.insert ident (declOfDef entry) decls, addDef ident entry defs)
   deal' ident (Declaration d) (decls,defs) = (Map.insert ident d decls,defs)
@@ -388,7 +388,7 @@ data BuiltinType = TyVaList
 
 -- | typdef references
 -- If the actual type is known, it is attached for convenience
-data TypeDefRef = TypeDefRef Ident (Maybe Type) NodeInfo
+data TypeDefRef = TypeDefRef Ident Type NodeInfo
                deriving (Typeable, Data {-! ,CNode !-})
 
 -- | integral types (C99 6.7.2.2)
@@ -430,12 +430,14 @@ data FloatType =
       TyFloat
     | TyDouble
     | TyLDouble
+    | TyFloatN Int Bool
     deriving (Typeable, Data, Eq, Ord)
 
 instance Show FloatType where
     show TyFloat = "float"
     show TyDouble = "double"
     show TyLDouble = "long double"
+    show (TyFloatN n x) = "_Float" ++ (show n) ++ (if x then "x" else "")
 
 -- | composite type declarations
 data CompTypeRef = CompTypeRef SUERef CompTyKind NodeInfo
@@ -491,26 +493,30 @@ instance Declaration Enumerator where
 -- | Type qualifiers: constant, volatile and restrict
 data TypeQuals = TypeQuals { constant :: Bool, volatile :: Bool,
                              restrict :: Bool, atomic :: Bool,
-                             nullable :: Bool, nonnull  :: Bool }
+                             nullable :: Bool, nonnull  :: Bool,
+                             clrdonly :: Bool, clwronly :: Bool }
     deriving (Typeable, Data)
 
 instance Eq TypeQuals where
- (==) (TypeQuals c1 v1 r1 a1 n1 nn1) (TypeQuals c2 v2 r2 a2 n2 nn2) =
+ (==) (TypeQuals c1 v1 r1 a1 n1 nn1 rd1 wr1) (TypeQuals c2 v2 r2 a2 n2 nn2 rd2 wr2) =
     c1 == c2 && v1 == v2 && r1 == r2 && a1 == a2 && n1 == n2 && nn1 == nn2
+    && rd1 == rd2 && wr1 == wr2
 
 instance Ord TypeQuals where
-  (<=) (TypeQuals c1 v1 r1 a1 n1 nn1) (TypeQuals c2 v2 r2 a2 n2 nn2) =
+  (<=) (TypeQuals c1 v1 r1 a1 n1 nn1 rd1 wr1) (TypeQuals c2 v2 r2 a2 n2 nn2 rd2 wr2) =
     c1 <= c2 && v1 <= v2 && r1 <= r2 && a1 <= a2 && n1 <= n2 && nn1 <= nn2
+    && rd1 <= rd2 && wr1 <= wr2
 
 
 -- | no type qualifiers
 noTypeQuals :: TypeQuals
-noTypeQuals = TypeQuals False False False False False False
+noTypeQuals = TypeQuals False False False False False False False False
 
 -- | merge (/&&/) two type qualifier sets
 mergeTypeQuals :: TypeQuals -> TypeQuals -> TypeQuals
-mergeTypeQuals (TypeQuals c1 v1 r1 a1 n1 nn1) (TypeQuals c2 v2 r2 a2 n2 nn2) =
+mergeTypeQuals (TypeQuals c1 v1 r1 a1 n1 nn1 rd1 wr1) (TypeQuals c2 v2 r2 a2 n2 nn2 rd2 wr2) =
   TypeQuals (c1 && c2) (v1 && v2) (r1 && r2) (a1 && a2) (n1 && n2) (nn1 && nn2)
+            (rd1 && rd2) (wr1 && wr2)
 
 -- * initializers
 

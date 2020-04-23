@@ -1,13 +1,13 @@
 module Main where
 
 import Data.List (intercalate)
-import System.Exit (ExitCode(..), exitFailure, exitSuccess)
+import System.Exit (ExitCode(..), exitFailure, exitSuccess, exitWith)
 import System.Directory (doesDirectoryExist, doesFileExist, getCurrentDirectory, setCurrentDirectory,
                          getDirectoryContents)
 import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode, callProcess)
 import System.IO (hPutStrLn, hPrint, stderr)
-import Control.Monad (filterM, liftM)
+import Control.Monad (filterM, liftM, when)
 
 testDirs :: [String]
 testDirs = ["test/harness","harness","."]
@@ -36,6 +36,11 @@ findM p (x:xs) = do guard <- p x ; if guard then (return $ Just x) else (findM p
 main :: IO ExitCode
 main = do
   actual_test_dir <- getActualTestDirectory testDirs
+  has_makefile <- doesFileExist (actual_test_dir </> "Makefile")
+  when (not has_makefile) $ do
+    hPutStrLn stderr "No Makefile found (out of source tree)"
+    hPutStrLn stderr "Skipping harness test"
+    exitWith ExitSuccess
   tests <- subdirectoriesOf actual_test_dir
   cdir <- getCurrentDirectory
   hPutStrLn stderr ("Changing to test directory " ++ actual_test_dir ++ " and compiling")
@@ -54,8 +59,12 @@ main = do
       setCurrentDirectory dir
       (exitCode, _outp, _errp) <- readProcessWithExitCode "make" [] ""
       hPutStrLn stderr ("cd " ++ dir ++ " && make: " ++ show exitCode)
---      hPutStrLn stdout _outp
---      hPutStrLn stderr _errp
+      when (exitCode /= ExitSuccess) $ do
+        hPutStrLn stderr "=== Standard Output ==="
+        hPutStrLn stderr _outp
+        hPutStrLn stderr "=== Error Output ==="
+        hPutStrLn stderr _errp
+        hPutStrLn stderr "=== End of Output ==="
       return exitCode
 
 

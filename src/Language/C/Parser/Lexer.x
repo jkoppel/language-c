@@ -119,10 +119,13 @@ $infname  = . # [ \\ \" ]             -- valid character in a filename
 @hexmant   = @hexdigits?\.@hexdigits|@hexdigits\.
 @binexp    = [pP][\+\-]?@digits
 
-@floatsuffix    = [fFlL]
+-- Suffixes `qQwW` are GNU floating type extensions: <https://gcc.gnu.org/onlinedocs/gcc/Floating-Types.html>
+@iec60559suffix = (32|64|128)[x]?
+@floatsuffix    = [fFlLqQwW]@iec60559suffix?
 @floatgnusuffix = @floatsuffix@gnusuffix?|@gnusuffix@floatsuffix?
 
-
+-- clang version literals with a major.minor.rev
+@clangversion = @intpart\.@intpart\.@intpart
 
 tokens :-
 
@@ -135,10 +138,14 @@ tokens :-
 --
 $white+         ;
 
--- #line directive (K&R A12.6)
+-- #line directive (C11 6.10.4, GCC Line Control)
 --
--- * allows further ints after the file name a la GCC; as the GCC CPP docu
---   doesn't say how many ints there can be, we allow an unbound number
+-- * standard form: int => change line number
+-- * standard form: int string => change source file and line number
+-- * preprocessor (gcc/clang): int string int => change source file and line number,
+--       push or pop item from stack
+--
+-- * see https://gcc.gnu.org/onlinedocs/cpp/Preprocessor-Output.html
 --
 \#$space*@int$space*(\"($infname|@charesc)*\"$space*)?(@int$space*)*\r?$eol
   { \pos len str -> setPos (adjustLineDirective len (takeChars len str) pos) >> lexToken' False }
@@ -182,6 +189,9 @@ $digitNZ$digit*@intgnusuffix?   { token_plus CTokILit (readCInteger DecRepr) }
 L\'($inchar|@charesc)\' { token CTokCLit (cChar_w . fst . unescapeChar . tail . tail) }
 \'($inchar|@charesc){2,}\' { token CTokCLit (flip cChars False . unescapeMultiChars .tail) }
 L\'($inchar|@charesc){2,}\' { token CTokCLit (flip cChars True . unescapeMultiChars . tail . tail) }
+
+-- Clang version literals
+@clangversion           { token (\pos -> CTokClangC pos . ClangCVersionTok) readClangCVersion }
 
 -- float constants (follows K&R A2.5.3. C99 6.4.4.2)
 --
@@ -259,6 +269,7 @@ readCOctal s@('0':r) =
         _                 -> readCInteger DecRepr s
 readCOctal _ = error "ReadOctal: string does not start with `0'"
 
+
 -- We use the odd looking list of string patterns here rather than normal
 -- string literals since GHC converts the latter into a sequence of string
 -- comparisons (ie a linear search) but it translates the former using its
@@ -268,23 +279,42 @@ readCOctal _ = error "ReadOctal: string does not start with `0'"
 -- To make this a little more maintainable, we autogenerate it from this list,
 -- using the script GenerateKeywords.hs (in /scripts)
 {-
-alignas _Alignas, alignof _Alignof __alignof alignof __alignof__, asm @__, atomic _Atomic, auto
-break, bool _Bool,
-case, char, const @__, continue, complex _Complex __complex__
+alignas _Alignas,
+alignof _Alignof __alignof alignof __alignof__,
+asm @__,
+atomic _Atomic,
+auto, break, bool _Bool,
+case, char, const @__, continue,
+complex _Complex __complex__
 default, do, double,
 else, enum, extern,
-float, for, goto,
-if, inline @__, int, __int128, long, noreturn _Noreturn,
 float, for,
-generic _Generic, goto,
-if, inline @__, int, int128 __int128, long,
-noreturn _Noreturn,  _Nullable __nullable, _Nonnull __nonnull,
+generic _Generic,
+goto,
+if, inline @__, int,
+int128 __int128,
+long,
+noreturn _Noreturn,
+nullable _Nullable __nullable,
+nonnull _Nonnull __nonnull,
 register, restrict @__, return
-short, signed @__, sizeof, static, staticAssert _Static_assert, struct, switch,
-typedef, typeof @__, thread __thread _Thread_local
-union, unsigned, void, volatile @__,
+short, signed @__, sizeof, static,
+staticAssert _Static_assert,
+struct, switch,
+typedef, typeof @__,
+thread __thread _Thread_local
+union,
+unsigned,
+void,
+volatile @__,
 while,
 label __label__
+(CTokFloatN 32 False) _Float32
+(CTokFloatN 32 True) _Float32x
+(CTokFloatN 64 False) _Float64
+(CTokFloatN 64 True) _Float64x
+(CTokFloatN 128 False) _Float128 __float128
+(CTokFloatN 128 True) _Float128x
 (CTokGnuC GnuCAttrTok) __attribute __attribute__
 (CTokGnuC GnuCExtTok) __extension__
 (CTokGnuC GnuCComplexReal) __real __real__
@@ -292,15 +322,16 @@ label __label__
 (CTokGnuC GnuCVaArg) __builtin_va_arg
 (CTokGnuC GnuCOffsetof) __builtin_offsetof
 (CTokGnuC GnuCTyCompat) __builtin_types_compatible_p
+(flip CTokClangC ClangBuiltinConvertVector) __builtin_convertvector
 -}
--- Tokens: _Alignas _Alignof __alignof alignof __alignof__ __asm asm __asm__ _Atomic auto break _Bool case char __const const __const__ continue _Complex __complex__ default do double else enum extern float for _Generic goto if __inline inline __inline__ int __int128 long _Noreturn  _Nullable __nullable _Nonnull __nonnull register __restrict restrict __restrict__ return short __signed signed __signed__ sizeof static _Static_assert struct switch typedef __typeof typeof __typeof__ __thread _Thread_local union unsigned void __volatile volatile __volatile__ while __label__ __attribute __attribute__ __extension__ __real __real__ __imag __imag__ __builtin_va_arg __builtin_offsetof __builtin_types_compatible_p
+-- Tokens: _Alignas _Alignof __alignof alignof __alignof__ __asm asm __asm__ _Atomic auto break _Bool case char __const const __const__ continue _Complex __complex__ default do double else enum extern float for _Generic goto if __inline inline __inline__ int __int128 long _Noreturn _Nullable __nullable _Nonnull __nonnull register __restrict restrict __restrict__ return short __signed signed __signed__ sizeof static _Static_assert struct switch typedef __typeof typeof __typeof__ __thread _Thread_local union unsigned void __volatile volatile __volatile__ while __label__ _Float32 _Float32x _Float64 _Float64x _Float128 __float128 _Float128x __attribute __attribute__ __extension__ __real __real__ __imag __imag__ __builtin_va_arg __builtin_offsetof __builtin_types_compatible_p __builtin_convertvector
 idkwtok ('_' : 'A' : 'l' : 'i' : 'g' : 'n' : 'a' : 's' : []) = tok 8 CTokAlignas
 idkwtok ('_' : 'A' : 'l' : 'i' : 'g' : 'n' : 'o' : 'f' : []) = tok 8 CTokAlignof
 idkwtok ('_' : 'A' : 't' : 'o' : 'm' : 'i' : 'c' : []) = tok 7 CTokAtomic
 idkwtok ('_' : 'B' : 'o' : 'o' : 'l' : []) = tok 5 CTokBool
 idkwtok ('_' : 'C' : 'o' : 'm' : 'p' : 'l' : 'e' : 'x' : []) = tok 8 CTokComplex
-idkwtok ('_' : 'N' : 'o' : 'n' : 'n' : 'u' : 'l' : 'l' : []) = tok 8 CTokNonnull
 idkwtok ('_' : 'G' : 'e' : 'n' : 'e' : 'r' : 'i' : 'c' : []) = tok 8 CTokGeneric
+idkwtok ('_' : 'N' : 'o' : 'n' : 'n' : 'u' : 'l' : 'l' : []) = tok 8 CTokNonnull
 idkwtok ('_' : 'N' : 'o' : 'r' : 'e' : 't' : 'u' : 'r' : 'n' : []) = tok 9 CTokNoreturn
 idkwtok ('_' : 'N' : 'u' : 'l' : 'l' : 'a' : 'b' : 'l' : 'e' : []) = tok 9 CTokNullable
 idkwtok ('_' : 'S' : 't' : 'a' : 't' : 'i' : 'c' : '_' : 'a' : 's' : 's' : 'e' : 'r' : 't' : []) = tok 14 CTokStaticAssert
@@ -315,6 +346,7 @@ idkwtok ('_' : '_' : 'a' : 't' : 't' : 'r' : 'i' : 'b' : 'u' : 't' : 'e' : []) =
 idkwtok ('_' : '_' : 'a' : 't' : 't' : 'r' : 'i' : 'b' : 'u' : 't' : 'e' : '_' : '_' : []) = tok 13 (CTokGnuC GnuCAttrTok)
 idkwtok ('a' : 'u' : 't' : 'o' : []) = tok 4 CTokAuto
 idkwtok ('b' : 'r' : 'e' : 'a' : 'k' : []) = tok 5 CTokBreak
+idkwtok ('_' : '_' : 'b' : 'u' : 'i' : 'l' : 't' : 'i' : 'n' : '_' : 'c' : 'o' : 'n' : 'v' : 'e' : 'r' : 't' : 'v' : 'e' : 'c' : 't' : 'o' : 'r' : []) = tok 23 (flip CTokClangC ClangBuiltinConvertVector)
 idkwtok ('_' : '_' : 'b' : 'u' : 'i' : 'l' : 't' : 'i' : 'n' : '_' : 'o' : 'f' : 'f' : 's' : 'e' : 't' : 'o' : 'f' : []) = tok 18 (CTokGnuC GnuCOffsetof)
 idkwtok ('_' : '_' : 'b' : 'u' : 'i' : 'l' : 't' : 'i' : 'n' : '_' : 't' : 'y' : 'p' : 'e' : 's' : '_' : 'c' : 'o' : 'm' : 'p' : 'a' : 't' : 'i' : 'b' : 'l' : 'e' : '_' : 'p' : []) = tok 28 (CTokGnuC GnuCTyCompat)
 idkwtok ('_' : '_' : 'b' : 'u' : 'i' : 'l' : 't' : 'i' : 'n' : '_' : 'v' : 'a' : '_' : 'a' : 'r' : 'g' : []) = tok 16 (CTokGnuC GnuCVaArg)
@@ -324,6 +356,7 @@ idkwtok ('_' : '_' : 'c' : 'o' : 'm' : 'p' : 'l' : 'e' : 'x' : '_' : '_' : []) =
 idkwtok ('_' : '_' : 'c' : 'o' : 'n' : 's' : 't' : []) = tok 7 CTokConst
 idkwtok ('c' : 'o' : 'n' : 's' : 't' : []) = tok 5 CTokConst
 idkwtok ('_' : '_' : 'c' : 'o' : 'n' : 's' : 't' : '_' : '_' : []) = tok 9 CTokConst
+idkwtok ('_' : '_' : 'c' : 'o' : 'n' : 's' : 't' : 'a' : 'n' : 't' : []) = tok 10 CTokConst
 idkwtok ('c' : 'o' : 'n' : 't' : 'i' : 'n' : 'u' : 'e' : []) = tok 8 CTokContinue
 idkwtok ('d' : 'e' : 'f' : 'a' : 'u' : 'l' : 't' : []) = tok 7 CTokDefault
 idkwtok ('d' : 'o' : []) = tok 2 CTokDo
@@ -333,6 +366,7 @@ idkwtok ('e' : 'n' : 'u' : 'm' : []) = tok 4 CTokEnum
 idkwtok ('_' : '_' : 'e' : 'x' : 't' : 'e' : 'n' : 's' : 'i' : 'o' : 'n' : '_' : '_' : []) = tok 13 (CTokGnuC GnuCExtTok)
 idkwtok ('e' : 'x' : 't' : 'e' : 'r' : 'n' : []) = tok 6 CTokExtern
 idkwtok ('f' : 'l' : 'o' : 'a' : 't' : []) = tok 5 CTokFloat
+idkwtok ('_' : '_' : 'f' : 'l' : 'o' : 'a' : 't' : '1' : '2' : '8' : []) = tok 10 (CTokFloatN 128 False)
 idkwtok ('f' : 'o' : 'r' : []) = tok 3 CTokFor
 idkwtok ('g' : 'o' : 't' : 'o' : []) = tok 4 CTokGoto
 idkwtok ('i' : 'f' : []) = tok 2 CTokIf
@@ -374,6 +408,20 @@ idkwtok ('_' : '_' : 'v' : 'o' : 'l' : 'a' : 't' : 'i' : 'l' : 'e' : []) = tok 1
 idkwtok ('v' : 'o' : 'l' : 'a' : 't' : 'i' : 'l' : 'e' : []) = tok 8 CTokVolatile
 idkwtok ('_' : '_' : 'v' : 'o' : 'l' : 'a' : 't' : 'i' : 'l' : 'e' : '_' : '_' : []) = tok 12 CTokVolatile
 idkwtok ('w' : 'h' : 'i' : 'l' : 'e' : []) = tok 5 CTokWhile
+#ifdef IEC_60559_TYPES_EXT
+idkwtok ('_' : 'F' : 'l' : 'o' : 'a' : 't' : '3' : '2' : []) = tok 8 (CTokFloatN 32 False)
+idkwtok ('_' : 'F' : 'l' : 'o' : 'a' : 't' : '3' : '2' : 'x' : []) = tok 9 (CTokFloatN 32 True)
+idkwtok ('_' : 'F' : 'l' : 'o' : 'a' : 't' : '6' : '4' : []) = tok 8 (CTokFloatN 64 False)
+idkwtok ('_' : 'F' : 'l' : 'o' : 'a' : 't' : '6' : '4' : 'x' : []) = tok 9 (CTokFloatN 64 True)
+idkwtok ('_' : 'F' : 'l' : 'o' : 'a' : 't' : '1' : '2' : '8' : []) = tok 9 (CTokFloatN 128 False)
+idkwtok ('_' : 'F' : 'l' : 'o' : 'a' : 't' : '1' : '2' : '8' : 'x' : []) = tok 10 (CTokFloatN 128 True)
+#endif
+-- For OpenCL tokens
+idkwtok ('_' : '_' : 'k' : 'e' : 'r' : 'n' : 'e' : 'l' : []) = tok 8 CTokClKernel
+idkwtok ('_' : '_' : 'r' : 'e' : 'a' : 'd' : '_' : 'o' : 'n' : 'l' : 'y' : []) = tok 11 CTokClRdOnly
+idkwtok ('_' : '_' : 'w' : 'r' : 'i' : 't' : 'e' : '_' : 'o' : 'n' : 'l' : 'y' : []) = tok 12 CTokClWrOnly
+idkwtok ('_' : '_' : 'g' : 'l' : 'o' : 'b' : 'a' : 'l' : []) = tok 8 CTokClGlobal
+idkwtok ('_' : '_' : 'l' : 'o' : 'c' : 'a' : 'l' : []) = tok 7 CTokClLocal
 
 idkwtok cs = \pos -> do
   name <- getNewName
@@ -400,19 +448,38 @@ tok len tc pos = return (tc (pos,len))
 
 adjustLineDirective :: Int -> String -> Position -> Position
 adjustLineDirective pragmaLen str pos =
-    offs' `seq` fname' `seq` row' `seq` (position offs' fname' row' 1)
+    offs' `seq` fname' `seq` row' `seq` parent' `seq` (position offs' fname' row' 1 parent')
     where
+    -- offset changes by length of #line pragma
     offs'           = (posOffset pos) + pragmaLen
     str'            = dropWhite . drop 1 $ str
     (rowStr, str'') = span isDigit str'
+    -- row changes to the first number in the line pragma
     row'      = read rowStr
     str'''      = dropWhite str''
-    fnameStr      = takeWhile (/= '"') . drop 1 $ str'''
+    (fnameStr,str'''') = span (/= '"') . drop 1 $ str'''
     fname = posFile pos
-    fname'      | null str''' || head str''' /= '"' = fname
-     -- try and get more sharing of file name strings
-     | fnameStr == fname     = fname
-     | otherwise             = fnameStr
+    no_fn = null str''' || (head str''' /= '"') || (head str'''' /= '"')
+    -- filename changes to new filename, if specified
+    fname' | no_fn = fname
+           -- try and get more sharing of file name strings
+           | fnameStr == fname     = fname
+           | otherwise             = fnameStr
+    -- analye flags
+    min_flag = find_min_flag (5 :: Int) (drop 1 str'''')
+    find_min_flag cur_min = select_min . span isDigit . dropWhile (not . isDigit)
+      where
+        select_min (numStr, fstr') | null numStr = cur_min
+                                   | otherwise = find_min_flag (read numStr `min` cur_min) fstr'
+    parent = posParent pos
+    parent' = case min_flag of
+                1 -> Just pos -- push
+                2 -> case parent >>= posParent of
+                         Nothing -> Nothing          -- pop/underflow
+                         Just gp -> gp `seq` Just gp -- pop
+                3 -> parent   -- unchanged stack, system header info
+                4 -> parent   -- unchanged stack, extern C info
+                _ -> Nothing
     --
     dropWhite = dropWhile (\c -> c == ' ' || c == '\t')
 

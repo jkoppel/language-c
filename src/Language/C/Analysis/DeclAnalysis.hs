@@ -18,7 +18,7 @@ module Language.C.Analysis.DeclAnalysis (
   mergeOldStyle,
   -- * Dissecting type specs
   canonicalTypeSpec, NumBaseType(..),SignSpec(..),SizeMod(..),NumTypeSpec(..),TypeSpecAnalysis(..),
-  canonicalStorageSpec, StorageSpec(..), hasThreadLocalSpec, isTypeDef,
+  canonicalStorageSpec, StorageSpec(..), hasThreadLocalSpec, hasClKernelSpec, isTypeDef,
   -- * Helpers
   VarDeclInfo(..),
   tAttr,mkVarName,getOnlyDeclr,nameOfDecl,analyseVarDecl,analyseVarDecl'
@@ -76,6 +76,8 @@ tParamDecl (CDecl declspecs declrs node) =
 computeParamStorage :: NodeInfo -> StorageSpec -> Either BadSpecifierError Storage
 computeParamStorage _ NoStorageSpec = Right (Auto False)
 computeParamStorage _ RegSpec       = Right (Auto True)
+computeParamStorage _ ClGlobalSpec  = Right (Static NoLinkage False)
+computeParamStorage _ ClLocalSpec   = Right (Static NoLinkage True)
 computeParamStorage node spec       = Left . badSpecifierError node $ "Bad storage specified for parameter: " ++ show spec
 
 -- | analyse and translate a member declaration
@@ -124,13 +126,18 @@ tMemberDecls (CDecl declspecs declrs node) = zipWithM tMemberDecl (True:repeat F
             return ()
 
 data StorageSpec = NoStorageSpec | AutoSpec | RegSpec | ThreadSpec | StaticSpec Bool | ExternSpec Bool
+                 | ClKernelSpec | ClGlobalSpec | ClLocalSpec
                     deriving (Eq,Ord,Show,Read)
 
 hasThreadLocalSpec :: StorageSpec -> Bool
 hasThreadLocalSpec ThreadSpec = True
+hasThreadLocalSpec ClLocalSpec = True
 hasThreadLocalSpec (StaticSpec b) = b
 hasThreadLocalSpec (ExternSpec b) = b
 hasThreadLocalSpec _  = False
+
+hasClKernelSpec :: StorageSpec -> Bool
+hasClKernelSpec ClKernelSpec = True
 
 data VarDeclInfo = VarDeclInfo VarName FunctionAttrs StorageSpec Attributes Type NodeInfo
 
@@ -289,7 +296,7 @@ mergeTypeAttributes node_info quals attrs typ =
     merge quals' attrs' tyf = return $ tyf (mergeTypeQuals quals quals') (attrs' ++ attrs)
 
 typeDefRef :: (MonadCError m, MonadSymtab m) => NodeInfo -> Ident -> m TypeDefRef
-typeDefRef t_node name = lookupTypeDef name >>= \ty -> return (TypeDefRef name (Just ty) t_node)
+typeDefRef t_node name = lookupTypeDef name >>= \ty -> return (TypeDefRef name ty t_node)
 
 -- extract a struct\/union
 -- we emit @declStructUnion@ and @defStructUnion@ actions
@@ -388,6 +395,7 @@ tNumType (NumTypeSpec basetype sgn sz iscomplex) =
         (BaseFloat, NoSignSpec, NoSizeMod)  -> floatType TyFloat
         (BaseDouble, NoSignSpec, NoSizeMod) -> floatType TyDouble
         (BaseDouble, NoSignSpec, LongMod)   -> floatType TyLDouble
+        (BaseFloatN n x, NoSignSpec, NoSizeMod) -> floatType (TyFloatN n x)
         -- TODO: error analysis
         (_,_,_)   -> error "Bad AST analysis"
     where
@@ -413,15 +421,18 @@ tTypeQuals = foldrM go (noTypeQuals,[]) where
     go (CAttrQual attr) (tq,attrs) = liftM (\attr' -> (tq,attr':attrs)) (tAttr attr)
     go (CNullableQual _) (tq,attrs) = return (tq { nullable = True }, attrs)
     go (CNonnullQual _) (tq,attrs) = return (tq { nonnull = True }, attrs)
+    go (CClRdOnlyQual _) (tq,attrs) = return (tq { clrdonly = True },attrs)
+    go (CClWrOnlyQual _) (tq,attrs) = return (tq { clwronly = True },attrs)
 
 -- * analysis
 
 
 {-
 To canoicalize type specifiers, we define a canonical form:
-void | bool | (char|int|int128|float|double)? (signed|unsigned)? (long long?)? complex? | othertype
+void | bool | (char|int|int128|float|double|floatNx)? (signed|unsigned)? (long long?)? complex? | othertype
 -}
-data NumBaseType = NoBaseType | BaseChar | BaseInt | BaseInt128 | BaseFloat | BaseDouble deriving (Eq,Ord)
+data NumBaseType = NoBaseType | BaseChar | BaseInt | BaseInt128 | BaseFloat |
+                   BaseFloatN Int Bool | BaseDouble deriving (Eq,Ord)
 data SignSpec    = NoSignSpec | Signed | Unsigned deriving (Eq,Ord)
 data SizeMod     = NoSizeMod | ShortMod | LongMod | LongLongMod deriving (Eq,Ord)
 data NumTypeSpec = NumTypeSpec { base :: NumBaseType, signSpec :: SignSpec, sizeMod :: SizeMod, isComplex :: Bool  }
@@ -450,6 +461,8 @@ canonicalTypeSpec = foldrM go TSNone where
                             = return$  TSNum$ nts { base = BaseInt128 }
     go (CFloatType _)   tsa | (Just nts@(NumTypeSpec { base = NoBaseType })) <- getNTS tsa
                             = return$  TSNum$ nts { base = BaseFloat }
+    go (CFloatNType n x _) tsa | (Just nts@(NumTypeSpec { base = NoBaseType })) <- getNTS tsa
+                            = return$  TSNum$ nts { base = BaseFloatN n x }
     go (CDoubleType _)  tsa | (Just nts@(NumTypeSpec { base = NoBaseType })) <- getNTS tsa
                             = return$  TSNum$ nts { base = BaseDouble }
     go (CShortType _)   tsa | (Just nts@(NumTypeSpec { sizeMod = NoSizeMod })) <- getNTS tsa
@@ -477,6 +490,9 @@ canonicalStorageSpec storagespecs = liftM elideAuto $ foldrM updStorage NoStorag
         updStorage (CAuto _) NoStorageSpec     = return AutoSpec
         updStorage (CRegister _) NoStorageSpec = return RegSpec
         updStorage (CThread _) NoStorageSpec   = return ThreadSpec
+        updStorage (CClKernel _) NoStorageSpec = return ClKernelSpec
+        updStorage (CClGlobal _) NoStorageSpec = return ClGlobalSpec
+        updStorage (CClLocal  _) NoStorageSpec = return ClLocalSpec
         updStorage (CThread _) (StaticSpec _)  = return$ StaticSpec True
         updStorage (CThread _) (ExternSpec _)  = return$ ExternSpec True
         updStorage (CStatic _) NoStorageSpec   = return$ StaticSpec False

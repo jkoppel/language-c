@@ -108,7 +108,7 @@ import qualified Data.List as List
 import Control.Monad (mplus)
 import Language.C.Parser.Builtin   (builtinTypeNames)
 import Language.C.Parser.Lexer     (lexC, parseError)
-import Language.C.Parser.Tokens    (CToken(..), GnuCTok(..), posLenOfTok)
+import Language.C.Parser.Tokens    (CToken(..), GnuCTok(..), ClangCTok (..), posLenOfTok)
 import Language.C.Parser.ParserMonad (P, failP, execParser, getNewName, addTypedef, shadowTypedef, getCurrentPosition,
                                       enterScope, leaveScope, getLastToken, getSavedToken, ParseError(..))
 
@@ -201,6 +201,13 @@ else		{ CTokElse	_ }
 enum		{ CTokEnum	_ }
 extern		{ CTokExtern	_ }
 float		{ CTokFloat	_ }
+"_Float32"	{ CTokFloatN  32 False _ }
+"_Float32x"	{ CTokFloatN  32 True _ }
+"_Float64"	{ CTokFloatN  64 False _ }
+"_Float64x"	{ CTokFloatN  64 True _ }
+"_Float128"	{ CTokFloatN 128 False _ }
+"_Float128x"	{ CTokFloatN 128 True _ }
+"__float128"	{ CTokFloatN 128 False _ }
 for		{ CTokFor	_ }
 "_Generic"      { CTokGeneric   _ }
 goto		{ CTokGoto	_ }
@@ -245,6 +252,13 @@ tyident		{ CTokTyIdent _ $$ }		-- `typedef-name' identifier
 "__builtin_va_arg"		{ CTokGnuC GnuCVaArg    _ }
 "__builtin_offsetof"		{ CTokGnuC GnuCOffsetof _ }
 "__builtin_types_compatible_p"	{ CTokGnuC GnuCTyCompat _ }
+"__builtin_convertvector"	{ CTokClangC _ ClangBuiltinConvertVector }
+clangcversion   { CTokClangC _ (ClangCVersionTok $$) } -- Clang version literal
+"__kernel"	{ CTokClKernel	_ }             -- OpenCL kernel function
+"__read_only"	{ CTokClRdOnly	_ }             -- OpenCL read only qualifier
+"__write_only"	{ CTokClWrOnly	_ }             -- OpenCL write only qualifier
+"__global"	{ CTokClGlobal	_ }             -- OpenCL global variable
+"__local"	{ CTokClLocal	_ }             -- OpenCL local variable
 
 %%
 
@@ -557,11 +571,11 @@ To allow a lightweight notation, we will use the modifier <permute> to indicate 
 -- storage class and type qualifier
 ---------------------------------------------------------------------------------------------------------------
 attr                       :-   __attribute__((..))
-storage_class              :-   typedef | extern | static | auto | register | _Thread_local
+storage_class              :-   typedef | extern | static | auto | register | _Thread_local | __kernel | __global | __local
 function_specifier         :-   inline | _Noreturn
 alignment_specifier        :-   _Alignas (type_name) | _Alignas (constant_expr)
 
-type_qualifier             :-   const | volatile | restrict | _Atomic | _Nullable | _Nonnull
+type_qualifier             :-   const | volatile | restrict | _Atomic | _Nullable | _Nonnull | __read_only | __write_only
 type_qualifier_list        :-   type_qualifier+
 
 declaration_qualifier      :-   storage_class | type_qualifier | function_specifier | alginment_specifier
@@ -768,10 +782,10 @@ declaration_specifier
   | typedef_declaration_specifier	{ reverse $1 }	-- Typedef
 
 
--- A mixture of type qualifiers (const, volatile, restrict, _Atomic, _Nonnull, _Nullable),
+-- A mixture of type qualifiers (const, volatile, restrict, _Atomic, _Nonnull, _Nullable, __read_only, __write_only),
 -- function specifiers (inline, _Noreturn),
 -- alignment specifiers (_Alignas) and
--- storage class specifiers (extern, static, auto, register, _Thread_local),
+-- storage class specifiers (extern, static, auto, register, _Thread_local, __kernel, __global, __local),
 -- in any order, but containing at least one storage class specifier.
 --
 -- declaration_qualifier_list :- <permute> type_qualifier* alignment_specifier* function_specifier* storage_class+
@@ -828,6 +842,9 @@ storage_class
   | auto			{% withNodeInfo $1 $ CAuto }
   | register			{% withNodeInfo $1 $ CRegister }
   | "__thread"			{% withNodeInfo $1 $ CThread }
+  | "__kernel"			{% withNodeInfo $1 $ CClKernel }
+  | "__global"			{% withNodeInfo $1 $ CClGlobal }
+  | "__local"			{% withNodeInfo $1 $ CClLocal }
 
 -- parse C function specifier (C11 6.7.4)
 function_specifier :: { CFunSpec }
@@ -870,7 +887,15 @@ basic_type_name
   | unsigned			{% withNodeInfo $1 $ CUnsigType }
   | "_Bool"			{% withNodeInfo $1 $ CBoolType }
   | "_Complex"			{% withNodeInfo $1 $ CComplexType }
-  | "__int128"      {% withNodeInfo $1 $ CInt128Type }
+  | "__int128"                  {% withNodeInfo $1 $ CInt128Type }
+  | "_Float32"                  {% withNodeInfo $1 $ (CFloatNType 32 False) }
+  | "_Float32x"                 {% withNodeInfo $1 $ (CFloatNType 32 True) }
+  | "_Float64"                  {% withNodeInfo $1 $ (CFloatNType 64 False) }
+  | "_Float64x"                 {% withNodeInfo $1 $ (CFloatNType 64 True) }
+  | "_Float128"                 {% withNodeInfo $1 $ (CFloatNType 128 False) }
+  | "_Float128x"                {% withNodeInfo $1 $ (CFloatNType 128 True) }
+  | "__float128"                {% withNodeInfo $1 $ (CFloatNType 128 False) }
+
 
 
 -- A mixture of type qualifiers, storage class and basic type names in any
@@ -1216,10 +1241,10 @@ enumerator_list
 
 enumerator :: { (Ident, Maybe CExpr) }
 enumerator
-  : identifier                              { ($1, Nothing) }
-  | identifier attr                         { ($1, Nothing) }
-  | identifier attr '=' constant_expression { ($1, Just $4) }
-  | identifier '=' constant_expression      { ($1, Just $3) }
+  : identifier                               { ($1, Nothing) }
+  | identifier attrs                         { ($1, Nothing) }
+  | identifier attrs '=' constant_expression { ($1, Just $4) }
+  | identifier '=' constant_expression       { ($1, Just $3) }
 
 
 -- parse C type qualifier (C11 6.7.3)
@@ -1234,8 +1259,10 @@ type_qualifier
   | "_Nullable"         {% withNodeInfo $1 $ CNullableQual }
   | "_Nonnull"          {% withNodeInfo $1 $ CNonnullQual }
   | "_Atomic"           {% withNodeInfo $1 $ CAtomicQual }
+  | "__read_only"       {% withNodeInfo $1 $ CClRdOnlyQual }
+  | "__write_only"      {% withNodeInfo $1 $ CClWrOnlyQual }
 
--- a list containing at least one type_qualifier (const, volatile, restrict, inline, _Noreturn)
+-- a list containing at least one type_qualifier (const, volatile, restrict, inline, _Noreturn, __read_only, __write_only)
 --    and additionally CAttrs
 type_qualifier_list :: { Reversed [CTypeQual] }
 type_qualifier_list
@@ -1734,6 +1761,9 @@ primary_expression
   | "__builtin_types_compatible_p" '(' type_name ',' type_name ')'
   	{% withNodeInfo $1 $ CBuiltinExpr . CBuiltinTypesCompatible $3 $5 }
 
+  | "__builtin_convertvector" '(' assignment_expression ',' type_name ')'
+        {% withNodeInfo $1 $ CBuiltinExpr . CBuiltinConvertVector $3 $5 }
+
 -- Generic Selection association list (C11 6.5.1.1)
 --
 -- TODO: introduce AST type for generic association
@@ -2058,7 +2088,7 @@ constant :: { CConst }
 constant
   : cint	  {% withNodeInfo $1 $ case $1 of CTokILit _ i -> CIntConst i }
   | cchar	  {% withNodeInfo $1 $ case $1 of CTokCLit _ c -> CCharConst c }
-  | cfloat	{% withNodeInfo $1 $ case $1 of CTokFLit _ f -> CFloatConst f }
+  | cfloat        {% withNodeInfo $1 $ case $1 of CTokFLit _ f -> CFloatConst f }
 
 
 string_literal :: { CStrLit }
@@ -2075,6 +2105,8 @@ string_literal_list
   : cstr			{ case $1 of CTokSLit _ s -> singleton s }
   | string_literal_list cstr	{ case $2 of CTokSLit _ s -> $1 `snoc` s }
 
+clang_version_literal :: { ClangCVersion }
+  : clangcversion       { $1 }
 
 identifier :: { Ident }
 identifier
@@ -2118,9 +2150,11 @@ attribute
 attribute_params :: { Reversed [CExpr] }
 attribute_params
   : constant_expression					              { singleton $1 }
+  | unary_expression assignment_operator clang_version_literal { Reversed [] }
   | unary_expression assignment_operator unary_expression { Reversed [] }
   | attribute_params ',' constant_expression	{ $1 `snoc` $3 }
   | attribute_params ',' unary_expression assignment_operator unary_expression { $1 }
+  | attribute_params ',' unary_expression assignment_operator clang_version_literal { $1 }
 
 {
 

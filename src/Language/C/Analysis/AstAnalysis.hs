@@ -45,10 +45,12 @@ import Language.C.Syntax.Utils
 import Text.PrettyPrint.HughesPJ
 
 
-import Control.Monad
-import Prelude hiding (reverse)
+import Prelude hiding (mapM, mapM_, reverse)
+import Control.Monad hiding (mapM, mapM_)
 import qualified Data.Map as Map
 import Data.Maybe
+import Data.Traversable (mapM)
+import Data.Foldable (mapM_)
 
 -- * analysis
 
@@ -105,6 +107,9 @@ analyseFunDef (CFunDef declspecs declr oldstyle_decls stmt node_info) = do
       return $ FunctionType (FunType return_ty [] False) attrs
     improveFunDefType ty = return ty
 
+voidM :: Monad m => m a -> m ()
+voidM m = m >> return ()
+
 -- | Analyse a declaration other than a function definition
 --
 --   Note: static assertions are not analysed
@@ -113,7 +118,7 @@ analyseDecl _is_local (CStaticAssert _expr _strlit _annot) = return () -- TODO
 analyseDecl is_local decl@(CDecl declspecs declrs node)
     | null declrs =
         case typedef_spec of Just _  -> astError node "bad typedef declaration: missing declarator"
-                             Nothing -> void$ analyseTypeDecl decl
+                             Nothing -> voidM$ analyseTypeDecl decl
     | (Just declspecs') <- typedef_spec = mapM_ (uncurry (analyseTyDef declspecs')) declr_list
     | otherwise   = do let (storage_specs, attrs, typequals, typespecs, funspecs, _alignspecs) =
                              partitionDeclSpecs declspecs
@@ -178,6 +183,7 @@ computeFunDefStorage ident other_spec  = do
   let defaultSpec = FunLinkage ExternalLinkage
   case other_spec of
     NoStorageSpec  -> return$ maybe defaultSpec declStorage obj_opt
+    ClKernelSpec  -> return$ maybe defaultSpec declStorage obj_opt
     (ExternSpec False) -> return$ maybe defaultSpec declStorage obj_opt
     bad_spec -> throwTravError $ badSpecifierError (nodeInfo ident)
                   $ "unexpected function storage specifier (only static or extern is allowed)" ++ show bad_spec
@@ -340,7 +346,7 @@ tStmt c (CCompound ls body _)    =
      return t
 tStmt c (CIf e sthen selse _)    =
   checkGuard c e >> tStmt c sthen
-                 >> maybe (return ()) (void . tStmt c) selse
+                 >> maybe (return ()) (voidM . tStmt c) selse
                  >> return voidType
 tStmt c (CSwitch e s ni)         =
   tExpr c RValue e >>= checkIntegral' ni >>
@@ -397,7 +403,7 @@ tStmt c (CFor i g inc s _)       =
      _ <- tStmt (LoopCtx : c) s
      leaveBlockScope
      return voidType
-  where checkExpr e = void$ tExpr c RValue e
+  where checkExpr e = voidM$ tExpr c RValue e
 tStmt c (CGotoPtr e ni)          =
   do t <- tExpr c RValue e
      case t of
@@ -695,7 +701,7 @@ tInitList ni t@(DirectType (TyComp ctr) _ _) initList =
      checkInits t default_ds initList
 tInitList _ (PtrType (DirectType TyVoid _ _) _ _ ) _ =
           return () -- XXX: more checking
-tInitList _ t [([], i)] = void$ tInit t i
+tInitList _ t [([], i)] = voidM$ tInit t i
 tInitList ni t _ = typeError ni $ "initializer list for type: " ++ pType t
 
 checkInits :: MonadTrav m => Type -> [CDesignator] -> CInitList -> m ()
@@ -759,6 +765,7 @@ builtinType :: MonadTrav m => CBuiltin -> m Type
 builtinType (CBuiltinVaArg _ d _)           = analyseTypeDecl d
 builtinType (CBuiltinOffsetOf _ _ _)        = return size_tType
 builtinType (CBuiltinTypesCompatible _ _ _) = return boolType
+builtinType (CBuiltinConvertVector _expr ty _) = analyseTypeDecl ty
 
 -- return @Just declspecs@ without @CTypedef@ if the declaration specifier contain @typedef@
 hasTypeDef :: [CDeclSpec] -> Maybe [CDeclSpec]
