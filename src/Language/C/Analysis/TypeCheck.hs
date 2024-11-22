@@ -2,6 +2,7 @@
 module Language.C.Analysis.TypeCheck where
 
 import Control.Monad
+import Control.Monad.Fail (MonadFail)
 import Data.Maybe
 import Language.C.Data.Ident
 import Language.C.Data.Node
@@ -17,6 +18,9 @@ import Language.C.Analysis.TypeConversions
 import Language.C.Analysis.TypeUtils
 import Language.C.Analysis.Debug ()
 import Text.PrettyPrint.HughesPJ
+
+instance MonadFail (Either String) where
+    fail = Left
 
 -- We used to re-implement and export the standard Either instance for
 -- Monad, which is bad, because as of GHC 7 it is in Control.Monad.Instances

@@ -47,6 +47,7 @@ import Language.C.Data.Ident    (Ident)
 import Language.C.Parser.Tokens (CToken(CTokEof))
 
 import Control.Monad (liftM, ap)
+import Control.Monad.Fail (MonadFail)
 import Data.Set  (Set)
 import qualified Data.Set as Set (fromList, insert, member, delete)
 
@@ -81,6 +82,8 @@ instance Applicative P where
 instance Monad P where
   return = returnP
   (>>=) = thenP
+
+instance MonadFail P where
   fail m = getPos >>= \pos -> failP pos [m]
 
 

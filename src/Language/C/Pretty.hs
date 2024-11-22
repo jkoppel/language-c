@@ -18,6 +18,7 @@ module Language.C.Pretty (
     -- * Testing
     prettyUsingInclude
 ) where
+import Prelude hiding ((<$>), (<>))
 import Data.List (isSuffixOf)
 import qualified Data.Set as Set
 import Text.PrettyPrint.HughesPJ

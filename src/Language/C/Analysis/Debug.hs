@@ -18,6 +18,7 @@ prettyAssocs, prettyAssocsWith,
 -- and many pretty instances
 )
 where
+import Prelude hiding ((<$>), (<>))
 import Language.C.Analysis.SemRep
 import Language.C.Analysis.Export
 import Language.C.Analysis.DefTable
