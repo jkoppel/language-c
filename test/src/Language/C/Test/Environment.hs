@@ -36,7 +36,7 @@ import qualified Data.Map as Map
 import System.Environment
 import System.FilePath (combine)
 import System.IO
-import Text.PrettyPrint
+import Text.PrettyPrint 
 
 -- | Takes a list of additional environment variable descriptions, and produces a document providing help
 --   on the influental environment variables.
@@ -46,7 +46,7 @@ envHelpDoc addEnvHelp
     (nest 4 . vcat . map varInfo) (envHelp ++ addEnvHelp)
   where
     varInfo (var, (descr, def)) = text var $$ nest 30 (prettyDescr descr def)
-    prettyDescr descr def = text descr <> prettyDef def
+    prettyDescr descr def = text descr Text.PrettyPrint.<> prettyDef def
     prettyDef Nothing = empty
     prettyDef (Just def) = text $ " [default = " ++ def ++ "]"
 
