@@ -36,7 +36,7 @@ import qualified Data.Map as Map
 import System.Environment
 import System.FilePath (combine)
 import System.IO
-import Text.PrettyPrint
+import Text.PrettyPrint hiding ( (<>) )
 
 -- | Takes a list of additional environment variable descriptions, and produces a document providing help
 --   on the influental environment variables.
