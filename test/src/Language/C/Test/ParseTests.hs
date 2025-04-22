@@ -21,6 +21,8 @@ ppTestTemplate, runPrettyPrint,
 equivTestTemplate,runEquivTest,
 compileTestTemplate, runCompileTest,
 ) where
+
+import Control.Monad (liftM)
 import Control.Monad.State
 import Data.List
 
